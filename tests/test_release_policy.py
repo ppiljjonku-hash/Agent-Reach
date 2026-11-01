@@ -186,7 +186,7 @@ def test_unknown_browser_files_are_not_deleted(monkeypatch):
 
 
 def test_uninstall_stops_before_deleting_files_if_browser_cannot_close(monkeypatch):
-    browser.update_state(backend="cloakbrowser")
+    browser.update_state(backend="chrome")
     note = state.root() / "must-keep.txt"
     note.write_text("keep")
     state.remember_path(note, "test owned artifact")

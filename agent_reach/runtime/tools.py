@@ -6,21 +6,21 @@ tools without `tested` use the newest version inside those limits. Existing user
 state.json records the version actually installed.
 
 Kinds:
-- pip / npm: private, under ~/.agent-reach/tools/<name>/ (own venv or npm
-  prefix). Never on the user's PATH; the user's own copy, if any, is untouched.
+- npm: private, under ~/.agent-reach/tools/<name>/ (npm prefix).
+  The user's own copy, if any, is untouched unless an upgrade is approved.
 - singleton (npm): can only exist once per machine (OpenCLI owns a fixed daemon
   port and a Chrome extension). A user copy inside the limits is used as is; an
   out-of-limits user copy is upgraded only with explicit consent; when missing
   it is installed into ~/.agent-reach/tools/npm-global/ and recorded as ours.
-- prerequisites (node, uv, ffmpeg, chrome): the system copy is used when there
-  is one; otherwise a private copy is installed without an admin password.
+- prerequisites (node, uv, ffmpeg, chrome): must be installed by the user.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -34,6 +34,8 @@ from . import state
 from .result import NEED_SETUP, TIMEOUT, UPSTREAM_BROKEN, ReachError, _clean
 
 OURS = "agent-reach"
+OPENCLI_TARBALL_URL = "https://registry.npmjs.org/@jackwener/opencli/-/opencli-1.8.7.tgz"
+OPENCLI_INTEGRITY = "sha512-2M+oPc70R1jNGzKzNrsm3fN4/gdvxCKlla7s9eaaTjkDjlzHpoZFN1YdV01A185kwCTN/ChOg+rbO4epO73c3w=="
 
 
 @dataclass(frozen=True)
@@ -52,9 +54,8 @@ class Tool:
 TOOLS: Dict[str, Tool] = {
     t.name: t
     for t in (
-        Tool("cloakbrowser", "pip", "cloakbrowser", ("cloakbrowser",), tested="0.6.3"),
         Tool("opencli", "npm", "@jackwener/opencli", ("opencli",), singleton=True, floor="1.8.7", exclude=("1.8.8",), tested="1.8.7", needs=("node",)),
-        Tool("ffmpeg", "ffmpeg", "imageio-ffmpeg", ("ffmpeg",)),
+        Tool("ffmpeg", "ffmpeg", "", ("ffmpeg",)),
         Tool("node", "node", "", ("node", "npm", "npx")),
         Tool("uv", "uv", "", ("uv", "uvx")),
         Tool("chrome", "chrome", "", ()),
@@ -108,8 +109,8 @@ def _private_bin(tool: Tool, command: str) -> Path:
 
 
 def bin_dirs() -> List[Path]:
-    """Private bin folders that exist (node, our npm -g prefix, uv, ffmpeg)."""
-    dirs = [_node_bin_dir(), _npm_global_bin(), tool_dir("uv") / "bin", tool_dir("ffmpeg") / "bin"]
+    """Private npm bin folder; machine prerequisites must be on the user's PATH."""
+    dirs = [_npm_global_bin()]
     return [d for d in dirs if d.is_dir()]
 
 
@@ -125,7 +126,7 @@ def extend_path() -> None:
 def resolve(command: str) -> Optional[str]:
     """Absolute path for `command`: our private copy first, then the user's PATH."""
     tool = _BY_COMMAND.get(command)
-    if tool and not tool.singleton:
+    if tool and not tool.singleton and tool.kind not in ("node", "uv", "ffmpeg"):
         private = _private_bin(tool, command)
         if private.exists():
             return str(private)
@@ -309,127 +310,38 @@ def _download(url: str, dest: Path, timeout: float = 600) -> None:
         raise ReachError(UPSTREAM_BROKEN, _clean(f"download failed: {url}: {exc}")) from None
 
 
-def _install_pip(tool: Tool) -> None:
-    venv = tool_dir(tool.name) / "venv"
-    venv.parent.mkdir(parents=True, exist_ok=True)
-    py = venv / ("Scripts/python.exe" if _WIN else "bin/python")
-    # ponytail: keep a partial install so rerunning setup reuses its packages
-    # and pip cache; venv repairs a missing interpreter in place.
-    if not py.is_file():
-        _run([sys.executable, "-m", "venv", str(venv)], stage=f"{tool.name}:venv")
-    _run([str(py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", install_spec(tool)],
-         stage=f"{tool.name}:pip_packages")
-    if tool.kind == "ffmpeg":
-        exe = _run([str(py), "-c", "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"]).strip()
-        link = _private_bin(tool, "ffmpeg")
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if link.exists() or link.is_symlink():
-            link.unlink()
-        try:
-            link.symlink_to(exe)
-        except (OSError, NotImplementedError):
-            shutil.copy2(exe, link)
-
-
 def _npm_cmd() -> str:
     npm = resolve("npm")
     if not npm:
-        raise ReachError(NEED_SETUP, "npm is not installed", hint="Run `agent-reach add <channel>` again.")
+        raise ReachError(NEED_SETUP, "npm is not installed; automatic downloads are disabled",
+                         hint="Install Node.js and npm yourself (macOS: brew install node), then rerun setup.")
     return npm
 
 
 def _install_npm(tool: Tool, *, global_prefix: Optional[Path] = None, system_global: bool = False) -> None:
     npm = _npm_cmd()
-    spec = install_spec(tool)
-    # OpenCLI ships its adapters; install hooks must not replace this verified
-    # release with mutable adapters or write unrelated agent configurations.
-    hooks = ["--ignore-scripts"] if tool.name == "opencli" else []
-    if system_global:
-        _run([npm, "install", "-g", *hooks, spec])
-    elif global_prefix is not None:
-        global_prefix.mkdir(parents=True, exist_ok=True)
-        _run([npm, "install", "-g", "--prefix", str(global_prefix), "--no-fund", "--no-audit", *hooks, spec])
-    else:
-        prefix = tool_dir(tool.name)
-        prefix.mkdir(parents=True, exist_ok=True)
-        _run([npm, "install", "--prefix", str(prefix), "--no-fund", "--no-audit", *hooks, spec])
-
-
-def _node_platform() -> Tuple[str, str, str]:
-    """(os, arch, archive extension) in nodejs.org naming."""
-    system = platform.system()
-    os_name = {"Darwin": "darwin", "Linux": "linux", "Windows": "win"}.get(system)
-    machine = platform.machine().lower()
-    arch = {"x86_64": "x64", "amd64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine)
-    if not os_name or not arch:
-        raise ReachError(NEED_SETUP, f"no official Node.js build for {system} {machine}",
-                         hint="Ask the user to install Node.js from https://nodejs.org.")
-    return os_name, arch, "zip" if os_name == "win" else "tar.gz"
-
-
-def _install_node(tool: Tool) -> None:
-    import hashlib
-    import tarfile
-    import zipfile
-
-    os_name, arch, ext = _node_platform()
+    if tool.name != "opencli":
+        raise ReachError(NEED_SETUP, f"No pinned npm artifact for {tool.name}; installation refused")
     from agent_reach.utils.paths import private_temporary_directory
 
-    with private_temporary_directory(prefix="node-") as tmp:
-        index = Path(tmp) / "index.json"
-        _download("https://nodejs.org/dist/index.json", index)
-        key = {"darwin": f"osx-{arch}-tar", "linux": f"linux-{arch}", "win": f"win-{arch}-zip"}[os_name]
-        try:
-            release = next(r for r in json.loads(index.read_text("utf-8")) if r.get("lts") and key in r.get("files", []))
-        except (StopIteration, ValueError):
-            raise ReachError(UPSTREAM_BROKEN, "could not find a Node.js LTS release for this machine") from None
-        version = release["version"]
-        if _command_version(str(_private_bin(tool, "node"))) == version.lstrip("v"):
-            return  # already the latest LTS
-        stem = f"node-{version}-{os_name}-{arch}"
-        archive = Path(tmp) / f"{stem}.{ext}"
-        base = f"https://nodejs.org/dist/{version}"
-        _download(f"{base}/{archive.name}", archive)
-        sums = Path(tmp) / "SHASUMS256.txt"
-        _download(f"{base}/SHASUMS256.txt", sums)
-        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        if f"{digest}  {archive.name}" not in sums.read_text("utf-8"):
-            raise ReachError(UPSTREAM_BROKEN, f"checksum mismatch for {archive.name}")
-        out = Path(tmp) / "x"
-        if ext == "zip":
-            with zipfile.ZipFile(archive) as zf:
-                zf.extractall(out)
+    with private_temporary_directory(prefix="opencli-") as tmp:
+        archive = Path(tmp) / "opencli-1.8.7.tgz"
+        _download(OPENCLI_TARBALL_URL, archive)
+        integrity = "sha512-" + base64.b64encode(hashlib.sha512(archive.read_bytes()).digest()).decode("ascii")
+        if integrity != OPENCLI_INTEGRITY:
+            archive.unlink()
+            raise ReachError(UPSTREAM_BROKEN, "OpenCLI SHA-512 mismatch; archive deleted and installation refused")
+        argv = [npm, "install", "--ignore-scripts", "--no-fund", "--no-audit"]
+        if system_global:
+            argv += ["-g"]
+        elif global_prefix is not None:
+            global_prefix.mkdir(parents=True, exist_ok=True)
+            argv += ["-g", "--prefix", str(global_prefix)]
         else:
-            with tarfile.open(archive) as tf:
-                if hasattr(tarfile, "data_filter"):
-                    tf.extractall(out, filter="data")
-                else:  # pragma: no cover - Python < 3.12 without the filter backport
-                    tf.extractall(out)
-        dest = tool_dir("node")
-        shutil.rmtree(dest, ignore_errors=True)
-        dest.mkdir(parents=True)
-        shutil.move(str(out / stem), str(dest / "current"))
-
-
-def _install_uv(tool: Tool) -> None:
-    dest = tool_dir("uv") / "bin"
-    env = {"UV_INSTALL_DIR": str(dest), "UV_NO_MODIFY_PATH": "1", "INSTALLER_NO_MODIFY_PATH": "1"}
-    if _WIN:
-        _run(["powershell", "-ExecutionPolicy", "ByPass", "-c", "irm https://astral.sh/uv/install.ps1 | iex"], env=env)
-    else:
-        from agent_reach.utils.paths import private_temporary_directory
-
-        with private_temporary_directory(prefix="uv-") as tmp:
-            script = Path(tmp) / "install.sh"
-            _download("https://astral.sh/uv/install.sh", script)
-            _run(["sh", str(script)], env=env)
-    nested = dest / "bin"  # older installers add a bin/ below UV_INSTALL_DIR
-    if nested.is_dir():
-        for f in nested.iterdir():
-            shutil.move(str(f), str(dest / f.name))
-        nested.rmdir()
-    if not _private_bin(tool, "uvx").exists():
-        raise ReachError(UPSTREAM_BROKEN, "the uv installer finished but uvx is missing")
+            prefix = tool_dir(tool.name)
+            prefix.mkdir(parents=True, exist_ok=True)
+            argv += ["--prefix", str(prefix)]
+        _run([*argv, str(archive)], stage="opencli:npm_packages")
 
 
 def _install(tool: Tool, *, global_: bool = False) -> None:
@@ -438,14 +350,8 @@ def _install(tool: Tool, *, global_: bool = False) -> None:
     if folder.exists() and not state.owned_path(folder) and state.load()["tools"].get(tool.name, {}).get("owner") != OURS:
         raise ReachError(NEED_SETUP, f"Unrecorded files occupy the {tool.name} install directory; left untouched")
     state.remember_path(folder, "installed dependency")
-    if tool.kind in ("pip", "ffmpeg"):
-        _install_pip(tool)
-    elif tool.kind == "npm":
+    if tool.kind == "npm":
         _install_npm(tool, global_prefix=npm_global_dir() if global_ else None)
-    elif tool.kind == "node":
-        _install_node(tool)
-    elif tool.kind == "uv":
-        _install_uv(tool)
     else:
         raise ReachError(UPSTREAM_BROKEN, f"no installer for {tool.name}")
     extend_path()
@@ -457,7 +363,7 @@ def _upgrade_user_singleton(tool: Tool) -> None:
 
 
 def record(name: str, version: Optional[str], *, owner: str = OURS, scope: str = "private", **extra) -> dict:
-    """Record a tool in state.json (also used by browser.ensure_chrome for Chrome for Testing)."""
+    """Record a tool in state.json."""
     data = state.load()
     entry = {"owner": owner, "scope": scope, "version": version, **extra}
     data["tools"][name] = entry
@@ -473,6 +379,11 @@ def ensure(name: str, *, allow_upgrade: bool = False, upgrade: bool = False) -> 
     Returns {"tool", "owner", "scope", "version"}; owner "system" = not ours, not recorded.
     """
     tool = TOOLS[name]
+    if tool.kind in ("node", "uv", "ffmpeg"):
+        if not all(shutil.which(command) for command in tool.commands):
+            raise ReachError(NEED_SETUP, f"{name} prerequisites ({', '.join(tool.commands)}) are not installed; automatic downloads are disabled",
+                             hint=f"Install them yourself (macOS: brew install {name}), then rerun setup.")
+        return {"tool": name, "owner": "system", "scope": "system", "version": None}
     for dep in tool.needs:
         ensure(dep)  # callers that upgrade list the dependency themselves (manage.sync)
     entry = state.load()["tools"].get(name) or {}
@@ -482,9 +393,6 @@ def ensure(name: str, *, allow_upgrade: bool = False, upgrade: bool = False) -> 
         from . import browser
 
         browser.ensure_chrome()
-        entry = state.load()["tools"].get(name)
-        if entry:
-            return {"tool": name, **entry}
         return {"tool": name, "owner": "system", "scope": "system", "version": None}
 
     if tool.singleton:
@@ -515,8 +423,6 @@ def ensure(name: str, *, allow_upgrade: bool = False, upgrade: bool = False) -> 
         return record(name, installed_version(tool), owner=entry.get("owner", "user"), scope="global")
 
     private_ok = all(_private_bin(tool, c).exists() for c in tool.commands)
-    if tool.kind in ("node", "uv", "ffmpeg") and not private_ok and all(shutil.which(c) for c in tool.commands):
-        return {"tool": name, "owner": "system", "scope": "system", "version": None}
     if not private_ok or not ours or upgrade:
         _install(tool)
     elif entry.get("version"):
@@ -536,7 +442,7 @@ def _uninstall_global(name: str, entry: dict, dry_run: bool) -> Optional[str]:
     desc = f"npm -g {tool.package}" + (f" (in {prefix})" if prefix else "")
     npm = resolve("npm")
     if not dry_run and npm:
-        argv = [npm, "uninstall", "-g"] + (["--prefix", prefix] if prefix else []) + [tool.package]
+        argv = [npm, "uninstall", "-g", "--ignore-scripts", "--no-audit", "--no-fund"] + (["--prefix", prefix] if prefix else []) + [tool.package]
         try:
             subprocess.run(argv, capture_output=True, timeout=300, env=_install_env())
         except (OSError, subprocess.TimeoutExpired):

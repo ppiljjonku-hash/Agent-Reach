@@ -448,10 +448,6 @@ def _cmd_logout(args: Sequence[str]) -> int:
     if ch.login_url:
         from . import manage, state
         browser.clear_site(manage.site_domains(ch))
-        # Retired per-site snapshots must not revive a login after logout.
-        legacy = state.root() / "sessions" / (ch.name + "-cloak")
-        if state.owned_path(legacy):
-            manage._remove(legacy)
         def forget(saved):
             saved["checks"].pop(ch.name, None)
             saved.setdefault("session_reuse", {})[ch.name] = {"blocked": True, "at": state.now()}
@@ -477,12 +473,9 @@ def _cmd_logout(args: Sequence[str]) -> int:
 def _cmd_browser(args: Sequence[str]) -> int:
     parser = _Parser(prog="browser", add_help=False)
     parser.add_argument("op", choices=("setup", "status", "stop", "profiles", "use"))
-    parser.add_argument("--retry-cloak", action="store_true")
     parser.add_argument("profile", nargs="?")
     try:
         ns = parser.parse_args(list(args))
-        if ns.retry_cloak and ns.op != "setup":
-            raise _ArgError("--retry-cloak applies only to browser setup")
         if ns.op in ("profiles", "use"):
             from . import session_reuse
             if ns.op == "use":
@@ -498,7 +491,7 @@ def _cmd_browser(args: Sequence[str]) -> int:
                 with exclusive_browser():
                     return fn(**kw)
             if ns.op == "setup":
-                return _mgmt("browser setup", run, browser.setup, retry_cloak=ns.retry_cloak)
+                return _mgmt("browser setup", run, browser.setup)
             return _mgmt("browser stop", run, browser.stop)
         return _mgmt("browser " + ns.op, getattr(browser, ns.op))
     except _ArgError as exc:

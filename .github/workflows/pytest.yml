@@ -97,7 +97,7 @@ jobs:
           channels = {name.rsplit("/", 1)[-1] for name in names if name.startswith("agent_reach/channels/") and name.endswith(".py")}
           assert channels == {"__init__.py", "base.py", "twitter.py", "reddit.py", "youtube.py"}, channels
           for retired in ("agent_reach/mcp_server.py", "agent_reach/runtime/ask.py",
-                          "agent_reach/backends/cloak_worker.py", "agent_reach/runtime/opencli_compat.py"):
+                          "agent_reach/runtime/opencli_compat.py"):
               assert retired not in names, f"retired module remains in wheel: {retired}"
           print(f"wheel OK: {len(names)} entries, no duplicates, data files present")
           PY
