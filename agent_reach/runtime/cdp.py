@@ -18,7 +18,7 @@ import urllib.request
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
-from .browser import CDP_URL
+from .browser import CDP_PORT, CDP_URL
 
 _GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _TIMEOUT = 5
@@ -84,7 +84,15 @@ def call(method: str, params: Optional[dict] = None, *, page: bool = False,
     if not ws:
         return None
     u = urlparse(ws)
-    host, port = u.hostname or "127.0.0.1", u.port or 80
+    try:
+        valid = (u.scheme == "ws" and u.hostname == "127.0.0.1"
+                 and u.port == CDP_PORT and not u.username and not u.password)
+    except ValueError:
+        valid = False
+    if not valid:
+        from .result import BAD_INPUT, ReachError
+        raise ReachError(BAD_INPUT, "CDP WebSocket must use the dedicated loopback endpoint")
+    host, port = "127.0.0.1", CDP_PORT
     try:
         with socket.create_connection((host, port), timeout=_TIMEOUT) as sock:
             sock.settimeout(_TIMEOUT)
