@@ -3,11 +3,14 @@
 > X, Reddit, YouTube only. Local site tools; no third-party search fallback or program self-update.
 
 - Repository: https://github.com/ppiljjonku-hash/Agent-Reach
-- Install: https://github.com/ppiljjonku-hash/Agent-Reach/blob/main/docs/install.md
+- Install: https://github.com/ppiljjonku-hash/Agent-Reach/blob/fork-v1/docs/install.md (tag created after merge; stop if absent)
 - Usage: agent-reach channels; agent-reach CHANNEL ACTION; agent-reach read SUPPORTED_URL
 - Channels: twitter (OpenCLI), reddit (OpenCLI), youtube (yt-dlp).
 - Audio transcription uploads to Groq/OpenAI only with a configured user key.
 - Browser session reuse is local and site-scoped. Users perform their own login.
 - Status: agent-reach doctor. Live verification: agent-reach check CHANNEL.
-- Update: https://github.com/ppiljjonku-hash/Agent-Reach/blob/main/docs/update.md
-- Troubleshooting: https://github.com/ppiljjonku-hash/Agent-Reach/blob/main/docs/troubleshooting.md
+- Prerequisites: user-installed Node/npm, ffmpeg, system Google Chrome; no automatic runtime/browser downloads. Missing prerequisites return NEED_SETUP.
+- Provenance: OpenCLI 1.8.7 SHA-512 verified local tgz, npm --ignore-scripts; extension 1.0.23 SHA-256 verified zip. Transitive npm dependencies are registry-resolved, not fully hash-pinned.
+- Chrome: macOS strict codesign verification and Google TeamIdentifier EQHXZ8M8AV; no signature verification on Linux/Windows.
+- Update: https://github.com/ppiljjonku-hash/Agent-Reach/blob/fork-v1/docs/update.md
+- Troubleshooting: https://github.com/ppiljjonku-hash/Agent-Reach/blob/fork-v1/docs/troubleshooting.md

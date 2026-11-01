@@ -4,7 +4,9 @@
 
 - 지원 채널은 X (`twitter`), Reddit (`reddit`), YouTube (`youtube`)만 유지합니다.
 - 제3자 검색·페이지 중계와 프로그램 자체 원격 갱신을 제거합니다.
-- OpenCLI 확장을 테스트 도구 버전 `v1.8.7` 릴리스로 고정합니다.
+- 시스템 Google Chrome만 사용하며 macOS는 실행 전 엄격한 서명과 Google 팀을 확인합니다.
+- Node·npm·uv·ffmpeg는 사용자가 미리 설치합니다. 자동 런타임·브라우저 다운로드를 제거합니다.
+- OpenCLI `1.8.7` tgz SHA-512와 확장 `1.0.23` zip SHA-256을 고정하고 npm 설치 훅을 끕니다.
 - 세션은 로컬에서만 복사합니다. 음성 전사는 사용자가 설정한 API 키가 있을 때만 외부 업로드합니다.
 - 아래는 축소 이전의 역사적 변경 기록이며 현재 지원 목록이 아닙니다.
 
@@ -95,8 +97,8 @@ English (technical):
 - **One-step setup / 一步装好**: `setup` adds every default channel through the same path as `add` (bili-cli goes into `~/.agent-reach/tools/`) and reports what works, which AIs can read the skill, optional channels and optional logins. / `setup` 用和 `add` 同一套逻辑开启全部默认渠道，并汇报哪些能用、哪些 AI 能读到 skill、可选渠道和可选登录。
 - **Skill placement / skill 放置**: one real copy at `~/.agents/skills/agent-reach/SKILL.md` (read directly by Codex, OpenCode, Cline, Warp, Zed); a link to it in the skill folder of Claude Code, OpenClaw, Hermes, Cursor, Gemini CLI, GitHub Copilot and Windsurf when installed (a copy where links are not allowed, e.g. Windows). `agent-reach skill link <dir>` covers any other AI. / 只放一份真文件，其他 AI 的 skill 目录里放指向它的链接（链接：一个指向原文件的快捷方式）。
 - **Private upstream installs, tested versions / 上游私有安装，用已测版本**: tools go into `~/.agent-reach/tools/`; the user's own copies are untouched. Tools with a declared tested version install at that version, and `update` keeps them there; other tools install the newest version inside `floor` and `exclude`, which also define acceptable existing tools. `state.json` records the version actually installed and `doctor` shows it. Single-instance tools (OpenCLI) reuse the user's copy; if it is outside the supported versions, it is upgraded only with `--allow-upgrade`. / 有已测版本的工具装已测版本，`update` 也保持不变；其他工具用兼容范围内的最新版；doctor 显示实际版本。
-- **`add` gives a finished result / `add` 一步到位**: missing prerequisites are installed without an admin password: uv (official script), ffmpeg (`imageio-ffmpeg` in a private venv), Node.js (official release under `~/.agent-reach/tools/node/` when the system has none), CloakBrowser (falling back to installed Chrome on download failure). git is no longer needed (Boss installs from a GitHub archive). The user only logs in or enters a key. / 缺的依赖自动装好，用户只需登录或填 Key。
-- **Login state under `~/.agent-reach/` / 登录状态统一管理**: CLI tool logins in `sessions/`, browser logins in a dedicated Agent Reach browser. The browser opens by itself when a channel needs it and closes after 10 minutes without use. The OpenCLI extension is loaded automatically on each CloakBrowser launch; Windows system-Chrome fallback may need one Web Store click. Only the requested site’s cookies are copied read-only from an existing connected local browser; the source remains unchanged. / 专用浏览器按需自动打开，10 分钟不用自动关闭；macOS/Linux 自动装好扩展。
+- **Historical automatic prerequisite setup / 历史自动安装依赖**: this release installed missing runtimes and a dedicated browser. The personal fork now requires user-installed prerequisites and system Google Chrome; see [install.md](docs/install.md).
+- **Login state under `~/.agent-reach/` / 登录状态统一管理**: CLI tool logins in `sessions/`, browser logins in a dedicated Agent Reach browser. The browser opens by itself when a channel needs it and closes after 10 minutes without use. The dedicated browser loads the OpenCLI extension; Windows system Chrome may need one Web Store click. Only the requested site’s cookies are copied read-only from an existing connected local browser; the source remains unchanged. / 专用浏览器按需自动打开，10 分钟不用自动关闭；macOS/Linux 自动装好扩展。
 - **remove cleans up / 去掉渠道会清理干净**: deletes the channel's private tools nobody else uses, its CLI session, its login keys and its site cookies in the Agent Reach browser. The shared browser profile is retained for explicit logout/reuse; unused private tools are pruned.
 - **Removable default channels / 默认渠道可去掉**: `state.json` records `removed_defaults`; `setup` and `update` never add them back; `add` brings one back.
 - **doctor states / 体检**: not_added, needs_setup, needs_login, unverified, ready, broken; plus `regressed` per channel (passed in the previous check, fails in the latest).

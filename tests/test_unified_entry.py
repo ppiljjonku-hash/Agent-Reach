@@ -549,7 +549,7 @@ def test_login_opens_site_in_dedicated_browser(capsys, monkeypatch, fake_browser
     assert fake_browser["opened"] == ["https://example.test/login"]
 
 
-@pytest.mark.parametrize("argv", [["ask", "find VLA"], ["mcp"], ["cloak", "setup"], ["browser", "repair-opencli"],
+@pytest.mark.parametrize("argv", [["ask", "find VLA"], ["mcp"], ["browser", "repair-opencli"],
                                   ["ensure", "twitter"],
                                   ["execute", "twitter", "search", "--params", '{"query":"VLA"}'],
                                   ["resume", "op_x"]])

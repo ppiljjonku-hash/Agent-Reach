@@ -305,8 +305,6 @@ def add(name: str, *, allow_upgrade: bool = False) -> dict:
 def _needed_tools(data: dict) -> set:
     added = [c for c in _channels() if is_added(c, data)]
     needed = tools.closure(t for c in added for t in channel_tools(c))
-    if any(_uses_browser(c) for c in added):
-        needed.add("cloakbrowser")
     return needed
 
 
@@ -329,9 +327,6 @@ def remove(name: str) -> dict:
     # Keep the registration and its tools until required login cleanup succeeds.
     cookies = browser.clear_site(site_domains(ch)) if _uses_browser(ch) else 0
     ch.on_remove()
-    legacy_profile = state.root() / "sessions" / (name + "-cloak")
-    if state.owned_path(legacy_profile) and legacy_profile.exists():
-        _remove(legacy_profile)
     if ch.session:
         clear_session(ch.session)
     if ch.logout_keys:

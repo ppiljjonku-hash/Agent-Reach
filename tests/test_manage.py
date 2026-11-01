@@ -96,7 +96,7 @@ def env(monkeypatch):
     monkeypatch.setenv("PATH", os.environ.get("PATH", ""))  # cli.main extends PATH; restore it
     chans = [Web(), Vid(), Bili(), Bili2(), Needy(), Site(), Site2(), Linky()]
     monkeypatch.setattr(manage, "_channels", lambda: chans)
-    system = {}  # command -> path the "user's PATH" has
+    system = {name: f"/usr/bin/{name}" for name in ("node", "npm", "npx")}
     monkeypatch.setattr(tools.shutil, "which", lambda c, *a, **k: system.get(c))
     monkeypatch.setattr(tools, "_command_version", _fake_version)
     installs, versions = [], {}
@@ -215,18 +215,16 @@ def test_our_singleton_is_upgraded_by_update(env):
     tools.ensure("opencli")
     env["versions"]["opencli"] = "2.0.0"
     assert tools.ensure("opencli", upgrade=True)["version"] == "2.0.0"
-    assert env["installs"] == ["node", "opencli", "opencli"]
+    assert env["installs"] == ["opencli", "opencli"]
 
 
-# ── add: missing prerequisites are installed ──
 
 
-def test_add_installs_missing_prerequisite_privately(env):
-    out = manage.add("needy")
-    assert out["added"] is True and env["installs"] == ["ffmpeg"]
-    assert tools.ffmpeg_path() == str(tools._private_bin(tools.TOOLS["ffmpeg"], "ffmpeg"))
-    assert state.load()["tools"]["ffmpeg"] == {"owner": "agent-reach", "scope": "private", "version": "1.2.3"}
-    assert "needy" in state.load()["channels"]
+def test_add_missing_prerequisite_requires_manual_install(env):
+    with pytest.raises(ReachError) as error:
+        manage.add("needy")
+    assert error.value.code == "NEED_SETUP"
+    assert env["installs"] == [] and "needy" not in state.load()["channels"]
 
 
 def test_system_prerequisite_is_used_not_installed(env):
@@ -235,10 +233,10 @@ def test_system_prerequisite_is_used_not_installed(env):
     assert env["installs"] == [] and "ffmpeg" not in state.load()["tools"]
 
 
-def test_npm_tool_gets_private_node_first(env):
+def test_npm_tool_uses_preinstalled_node(env):
     out = manage.add("linky")
-    assert env["installs"] == ["node", "mcporter"]
-    assert {t: e["version"] for t, e in state.load()["tools"].items()} == {"node": "1.2.3", "mcporter": "1.2.3"}
+    assert env["installs"] == ["mcporter"]
+    assert {t: e["version"] for t, e in state.load()["tools"].items()} == {"mcporter": "1.2.3"}
     assert "agent-reach login linky" in out["next"]
 
 
@@ -256,7 +254,7 @@ def test_browser_channel_add_never_opens_login_and_explicit_dedicated_remove_cle
     last = manage.remove("site2")
     assert ("clear_site", ("site.example",)) in env["calls"]
     assert "delete_profile" not in env["calls"] and last["browser_deleted"] is False
-    assert set(last["removed_tools"]) == {"opencli", "node"}
+    assert set(last["removed_tools"]) == {"opencli"}
     assert state.load()["tools"] == {}
     assert not tools.tool_dir("node").exists()
 
