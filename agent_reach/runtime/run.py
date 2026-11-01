@@ -2,24 +2,18 @@
 
 from __future__ import annotations
 
-import http.client
 import os
 import re
 import signal
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
-from agent_reach import __version__
 from agent_reach.utils.process import utf8_subprocess_env
 
 from .result import BAD_INPUT, NEED_SETUP, TIMEOUT, ReachError, _clean
 
-_DEFAULT_MAX_BYTES = 8 * 1024 * 1024
-# Some fronts (Exa's Cloudflare) block the default Python-urllib agent (error 1010).
-_USER_AGENT = f"agent-reach/{__version__}"
 _NPM_SHIM_SCRIPT = re.compile(r'"%dp0%\\(?P<script>[^"\r\n]*?\.(?:cjs|mjs|js))"', re.IGNORECASE)
 _CMD_METACHARS = frozenset('&|<>^()%!"\r\n')
 
@@ -145,28 +139,3 @@ def run_cmd(
             stdout=stdout,
         )
     return stdout
-
-
-def http_request(
-    url: str,
-    *,
-    timeout: float,
-    data: Optional[bytes] = None,
-    headers: Optional[Mapping[str, str]] = None,
-    max_bytes: int = _DEFAULT_MAX_BYTES,
-) -> bytes:
-    """GET (or POST when `data` is given) with a size cap. Errors propagate to classify()."""
-    merged = {"User-Agent": _USER_AGENT}
-    merged.update(headers or {})
-    req = urllib.request.Request(url, data=data, headers=merged)
-    with urllib.request.urlopen(req, timeout=max(timeout, 0.1)) as resp:
-        body = resp.read(max_bytes + 1)
-        declared = getattr(resp, "headers", {}).get("Content-Length", "")
-        if isinstance(declared, str) and declared.strip().isdigit() and len(body) <= max_bytes:
-            expected = int(declared)
-            if len(body) < expected:
-                # A bounded read can silently return a short body on early EOF.
-                raise http.client.IncompleteRead(body, expected - len(body))
-    if len(body) > max_bytes:
-        raise ReachError("UPSTREAM_BROKEN", f"response exceeds {max_bytes} bytes")
-    return body

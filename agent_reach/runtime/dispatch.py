@@ -187,16 +187,6 @@ def _pick_error(errors: List[ReachError]) -> ReachError:
     return errors[0]
 
 
-def _channel_added(channel: Channel) -> bool:
-    """An added channel answers from its own site tools; public web search is only for channels not set up yet."""
-    from .manage import is_added
-
-    try:
-        return is_added(channel, state.load())
-    except Exception:  # noqa: BLE001 - an unreadable ledger must not block the query
-        return False
-
-
 def run_action(
     channel: Channel,
     action_name: str,
@@ -216,10 +206,7 @@ def run_action(
     except ReachError as validation_error:
         return envelope(channel=channel.name, action=action_name, elapsed_ms=elapsed(), error=validation_error)
 
-    from . import public_web
-
-    public_only = only_backend == public_web.BACKEND and bool(action.public_web)
-    backends = [b for b in action.backends if only_backend in (None, b[0]) or public_only]
+    backends = [b for b in action.backends if only_backend in (None, b[0])]
     if not backends:
         return envelope(channel=channel.name, action=action_name, elapsed_ms=elapsed(),
                         error=ReachError(BAD_INPUT, f"no backend named '{only_backend}'"))
@@ -232,18 +219,8 @@ def run_action(
         if limited:
             raise ReachError(RATE_LIMITED, limited["message"],
                              hint=f"Wait {limited['retry_after_seconds']} seconds before retrying this channel.")
-        if action.public_web and ((only_backend is None and not _channel_added(channel)) or public_only):
-            budget = clock.remaining() if public_only else min(public_web.MAX_SECONDS, clock.remaining() / 2)
-            public = public_web.attempt(channel, action, clean, timeout=budget)
-            if public is not None:
-                attempts.extend(public["meta"]["attempts"])
-                if public["ok"] or public_only:
-                    public["meta"]["elapsed_ms"] = elapsed()
-                    return public
-            elif public_only:
-                raise ReachError(BAD_INPUT, "This input has no public web route; use a full supported URL")
         # Browser queries wait in line: a few per site and overall share the browser at once.
-        browser_action = any(b[0] in {"opencli", "boss-agent-cli"} for b in action.backends)
+        browser_action = any(b[0] == "opencli" for b in action.backends)
         lock = query_slot(channel.name, clock) if browser_action else nullcontext()
         with lock:
             limited = cooldown(channel.name)
@@ -284,28 +261,6 @@ def run_action(
                     elapsed_ms=elapsed(),
                     attempts=attempts,
                 )
-        # Last resort for an added channel: every site backend failed (or is
-        # paused after failing) with a transient error, so the public-web
-        # route is tried once. This keeps the public-first rule (site tools
-        # stay preferred) while fixing the case where a logged-in channel
-        # reports failure even though the public path works (e.g. the site
-        # tool returns HTML instead of JSON). Explicit --backend selection and
-        # final errors (bad input, login wall, rate limit, platform block, ...)
-        # never fall back.
-        failures = errors + cached_errors
-        if (action.public_web and only_backend is None and failures
-                and not any(e.code in FINAL_CODES for e in failures)
-                and any(e.code in (UPSTREAM_BROKEN, TIMEOUT) for e in failures)
-                and clock.remaining() > 0):
-            public = public_web.attempt(channel, action, clean, timeout=clock.remaining())
-            if public is not None:
-                attempts.extend(public["meta"]["attempts"])
-                if public["ok"]:
-                    # Keep the site-backend failure in the trail, not just
-                    # the public-web rows, so the fallback is auditable.
-                    public["meta"]["attempts"] = attempts
-                    public["meta"]["elapsed_ms"] = elapsed()
-                    return public
     except ReachError as exc:
         errors.append(exc)
 

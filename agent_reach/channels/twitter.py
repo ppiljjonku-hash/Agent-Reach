@@ -45,7 +45,6 @@ class TwitterChannel(Channel):
             ),
             (("opencli", "_opencli_search"),),
             live_test={"query": "openai", "limit": 2},
-            public_web=("x.com/", "twitter.com/"),
         ),
         Action(
             "profile",

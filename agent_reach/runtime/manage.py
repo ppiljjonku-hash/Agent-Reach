@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -20,10 +19,9 @@ from urllib.parse import urlparse
 from agent_reach import __version__
 from agent_reach.utils.paths import home_dir
 
-from . import state, tools, update_notice
-from .result import BAD_INPUT, NEED_SETUP, UPSTREAM_BROKEN, ReachError
+from . import state, tools
+from .result import BAD_INPUT, UPSTREAM_BROKEN, ReachError
 
-REPO = update_notice.REPO
 CHECK_FRESH_SECONDS = 24 * 3600
 
 #: Machine prerequisites a channel may list in `prereqs` (keys of tools.TOOLS).
@@ -605,12 +603,10 @@ def _skill_uninstall_targets() -> List[Path]:
 # ── setup / migrate ──
 
 #: 1.5 config keys and CLI tools that show which channels the user relied on.
-_LEGACY_KEYS = {"twitter_auth_token": "twitter", "twitter_ct0": "twitter", "xueqiu_cookie": "xueqiu",
-                "xhs_cookie": "xiaohongshu"}
-_LEGACY_COMMANDS = {"twitter": "twitter", "xhs": "xiaohongshu", "opencli": "xiaohongshu", "rdt": "reddit",
-                    "bili": "bilibili", "boss": "boss"}
+_LEGACY_KEYS = {"twitter_auth_token": "twitter", "twitter_ct0": "twitter"}
+_LEGACY_COMMANDS = {"twitter": "twitter", "rdt": "reddit"}
 #: 1.5 channels that 1.6 no longer has; the report says what replaces them.
-RETIRED_CHANNELS = ("rss", "exa_search")
+RETIRED_CHANNELS = ()
 
 
 def migrate() -> dict:
@@ -669,8 +665,6 @@ def setup() -> dict:
     migration = None if saved_migration.get("migration_reported") else saved_migration.get("migration")
     old_copies = _cleanup_old_copies()
     user_actions = _retired_mcp_notice() + _old_copy_actions(old_copies)
-    if state.load()["tools"].get("mcporter", {}).get("owner") == tools.OURS:
-        tools.remove_private("mcporter")  # retired LinkedIn MCP transport, only our private copy
     state.mutate(lambda saved: [saved.pop(key, None) for key in ("reuse_sources", "ask_pending", "pending")])
     skill = place_skill()
     data = state.load()
@@ -724,24 +718,6 @@ def _retired_mcp_notice() -> list:
 
 # ── update ──
 
-def update_check() -> dict:
-    """Live check of the latest release; also refreshes the background notice cache."""
-    try:
-        rel = update_notice.fetch_latest(timeout=15)
-    except Exception as exc:  # noqa: BLE001
-        raise ReachError(UPSTREAM_BROKEN, f"could not reach GitHub: {exc}") from None
-    try:
-        update_notice.write_cache(rel)
-    except OSError:
-        pass
-    return {
-        "current": __version__,
-        "latest": rel["latest"],
-        "update_available": update_notice.version_tuple(rel["latest"]) > update_notice.version_tuple(__version__),
-        "notes": rel["notes"],
-    }
-
-
 def install_method() -> str:
     """How this copy of Agent Reach was installed: uv | editable | other."""
     try:
@@ -755,14 +731,6 @@ def install_method() -> str:
     if (Path(sys.prefix) / "uv-receipt.toml").is_file():
         return "uv"
     return "other"
-
-
-def _source(version: str) -> str:
-    return f"https://github.com/{REPO}/archive/refs/tags/v{version}.zip"
-
-
-def upgrade_command(version: str) -> List[str]:
-    return ["uv", "tool", "install", "--force", _source(version)]
 
 
 UNINSTALL_PROGRAM = "uv tool uninstall agent-reach"
@@ -831,79 +799,6 @@ def sync() -> dict:
             "old_copies": old_copies}
 
 
-def _move_to_uv(info: dict) -> dict:
-    """This copy was installed with pip/pipx (1.5 style). Install the release with uv, let the
-    new copy set itself up (it removes known old copies), then remove this copy too."""
-    fresh = not state.exists()
-    if fresh and (state.root() / "config.yaml").exists():
-        migrate()  # recorded in state; the new copy's install report explains the upgrade
-    uv = tools.resolve("uv")
-    if not uv:
-        tools.ensure("uv")
-        uv = tools.resolve("uv")
-    if not uv:
-        raise ReachError(NEED_SETUP, "uv could not be installed",
-                         hint="Install uv: https://docs.astral.sh/uv/getting-started/installation/")
-    newest = update_notice.version_tuple(info["latest"]) >= update_notice.version_tuple(__version__)
-    cmd = upgrade_command(info["latest"] if newest else __version__)
-    proc = subprocess.run([uv, *cmd[1:]], capture_output=True, text=True, timeout=900)
-    if proc.returncode != 0:
-        raise ReachError(UPSTREAM_BROKEN, f"upgrade failed: {proc.stderr.strip()[-300:]}",
-                         hint=f"Run manually: {' '.join(cmd)}")
-    bin_dir = subprocess.run([uv, "tool", "dir", "--bin"], capture_output=True, text=True, timeout=60).stdout.strip()
-    exe = Path(bin_dir) / ("agent-reach.exe" if os.name == "nt" else "agent-reach")
-    child = [str(exe), "setup"] if fresh else [str(exe), "update", "--sync-only"]
-    out = subprocess.run(child, capture_output=True, text=True, timeout=1800)
-    try:
-        result = json.loads(out.stdout.strip().split("\n")[-1]).get("result") or {}
-    except (ValueError, IndexError):
-        result = {"raw": out.stdout[-500:]}
-    actions = list(result.get("user_actions") or [])
-    package = Path(__file__).resolve().parents[1]
-    if package.exists():  # a copy the new one does not know about (pip --user, conda, ...)
-        gone = subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "agent-reach"],
-                              capture_output=True, timeout=120).returncode == 0
-        if not gone:
-            actions.append(f"Remove the old Agent Reach copy: `{sys.executable} -m pip uninstall agent-reach`.")
-    found = shutil.which("agent-reach")
-    if not found or os.path.realpath(found) != os.path.realpath(exe):
-        actions.append("Open a new terminal so `agent-reach` runs the new version; if it still does not, "
-                       f"run `{uv} tool update-shell`.")
-    return {**info, "upgraded": True, "method": "moved_to_uv", "sync": result,
-            "installation_report": result.get("installation_report"), "user_actions": actions}
-
-
-def update(check_only: bool = False) -> dict:
-    """Upgrade Agent Reach when a release is newer, then upgrade every added channel's tools."""
-    info = update_check()
-    if check_only:
-        return info
-    method = install_method()
-    if method == "other":
-        return _move_to_uv(info)
-    if info["update_available"] and method != "editable":
-        cmd = upgrade_command(info["latest"])
-        run = [tools.resolve("uv") or cmd[0], *cmd[1:]]
-        try:
-            proc = subprocess.run(run, capture_output=True, text=True, timeout=900)
-        except FileNotFoundError:
-            raise ReachError(NEED_SETUP, "uv is not on PATH",
-                             hint="Install uv: https://docs.astral.sh/uv/getting-started/installation/") from None
-        if proc.returncode != 0:
-            raise ReachError(UPSTREAM_BROKEN, f"upgrade failed: {proc.stderr.strip()[-300:]}",
-                             hint=f"Run manually: {' '.join(cmd)}")
-        exe = shutil.which("agent-reach") or sys.argv[0]
-        out = subprocess.run([exe, "update", "--sync-only"], capture_output=True, text=True, timeout=1800)
-        try:
-            synced = json.loads(out.stdout.strip().split("\n")[-1]).get("result") or {}
-        except (ValueError, IndexError):
-            synced = {"raw": out.stdout[-500:]}
-        return {**info, "upgraded": True, "method": method, "sync": synced,
-                "user_actions": synced.get("user_actions", [])}
-    synced = sync()
-    return {**info, "upgraded": False, "method": method, "sync": synced, "user_actions": synced["user_actions"]}
-
-
 # ── uninstall ──
 
 
@@ -951,7 +846,7 @@ def uninstall(dry_run: bool = False) -> dict:
 
 # ── configure ──
 
-CONFIG_KEYS = {"groq-key": "groq_api_key", "openai-key": "openai_api_key", "proxy": "proxy", "github-token": "github_token",
+CONFIG_KEYS = {"groq-key": "groq_api_key", "openai-key": "openai_api_key", "proxy": "proxy",
                "browser-port": "browser_port",
 }
 

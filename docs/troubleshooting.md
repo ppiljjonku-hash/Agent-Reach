@@ -1,96 +1,36 @@
-# Troubleshooting
+# 문제 해결
 
-Start with:
+지원 채널은 `twitter`, `reddit`, `youtube`입니다. `agent-reach channels`로 사용법을 확인합니다.
+`agent-reach doctor --text`는 로컬 상태만 보여줍니다. 설치 성공은 실계정 검증이 아닙니다.
+`agent-reach check CHANNEL --search`는 실제 사이트 요청을 수행합니다.
 
-```bash
-agent-reach doctor --text     # offline status of every channel
-agent-reach check <channel> --text   # live test of one channel
-```
+| 오류 | 조치 |
+|---|---|
+| BAD_INPUT | 채널·액션·URL·인자를 확인합니다. 일반 웹 URL은 읽지 않습니다. |
+| NEED_SETUP | doctor의 의존성 또는 키 안내를 확인합니다. |
+| NEED_LOGIN | 로컬 세션을 확인한 뒤 필요하면 사용자가 직접 로그인합니다. |
+| RATE_LIMITED | 지정된 대기 시간을 지킵니다. 우회 재시도하지 않습니다. |
+| PLATFORM_BLOCKED | 자동화를 중단하고 공식 사이트에서 사용자가 확인합니다. |
+| TIMEOUT / UPSTREAM_BROKEN | 실패한 도구와 단계를 확인합니다. 외부 검색으로 우회하지 않습니다. |
+| NOT_FOUND | 링크와 콘텐츠 ID를 확인합니다. |
+| BUSY | 같은 브라우저를 사용하는 작업이 끝날 때까지 기다립니다. |
 
-## Error codes
+## 브라우저와 세션
 
-Every failed command returns `ok: false` and an `error` with `code`, `message` and `hint`. The `hint` is usually the exact next step.
+`browser status`, `browser profiles`는 상태 조회입니다.
+`browser use ID`는 기존 연결된 로컬 로그인 출처를 선택합니다.
+`login CHANNEL --import-existing`은 사이트별 로컬 쿠키를 다시 복사합니다.
+`login CHANNEL`은 사용자가 로그인할 전용 창을 엽니다.
+`logout CHANNEL`은 해당 사이트의 전용 세션만 제거합니다.
+CDP 포트를 외부에 노출하거나 임의 원격 주소를 연결하지 마세요.
+세션 세부 사항은 [세션 문서](../agent_reach/skill/references/sessions.md)를 참고합니다.
 
-| Code | Meaning | What to do |
-|---|---|---|
-| `NEED_SETUP` | a tool, key or selected browser connection is missing | run `agent-reach doctor --text` and follow the problem listed for the channel; use `agent-reach add <channel>` to install the channel's tools |
-| `NEED_LOGIN` | login is missing or expired | the user runs `agent-reach login <channel>` and logs in themselves; do not delete credentials to fix a connection or platform-verification error |
-| `UPSTREAM_BROKEN` | the upstream tool or platform failed | don't retry in a loop; try again later, inspect the upstream error and pinned dependency version, then `agent-reach check <channel>`; still broken → open an issue with the `message` |
-| `TIMEOUT` | no backend answered in time | retry later, or pass a larger `--timeout SECONDS`; on a restricted network set a proxy (below) |
-| `RATE_LIMITED` | the platform is throttling | wait for `retry_after_seconds`; do not switch accounts or backends to continue requesting |
-| `NOT_FOUND` | the content does not exist | check the link, id or username |
-| `BAD_INPUT` | wrong arguments or unknown channel/action | run `agent-reach channels` for valid actions and usage |
+## 전사
 
-## Doctor statuses
+Groq/OpenAI 키가 없으면 전사는 실패합니다. 자막은 전사와 별개입니다.
+전사는 오디오 외부 업로드이므로 사용자 동의와 키 설정 후에만 실행합니다.
 
-| Status | Meaning | What to do |
-|---|---|---|
-| `not_added` | optional channel not turned on | `agent-reach add <channel>` |
-| `needs_setup` | something is missing; `problems` says what | use `agent-reach add <channel>` or follow the specific setup step |
-| `needs_login` | the last live check failed only on login | `agent-reach login <channel>` (the user logs in) |
-| `unverified` | set up, but no live check in the last 24 hours | `agent-reach check <channel>` |
-| `search_ready` | search returned nonempty results in the last 24 hours | read and other actions need their own checks |
-| `ready` | passed the recorded live checks in the last 24 hours | inspect verified actions for the requested capability |
-| `cooldown` | a rate limit is still active | wait for `retry_after_seconds` |
-| `broken` | the last live check failed for another reason | `agent-reach update`, then `agent-reach check <channel> --text`; see `UPSTREAM_BROKEN` |
+## 신고
 
-Run `agent-reach check` first if you want fresh live results. In the `doctor` output, `regressed: true` on a channel means an action passed in the previous check and fails in the latest one.
-
-## Tool versions
-
-Some channel tools install at tested versions; others use a supported range. `agent-reach doctor` shows installed versions. If a version fails, inspect the exact backend attempt before changing it.
-
-## Reusing existing sessions
-
-`login CHANNEL` opens the Reach dedicated window. The user logs in there. Personal Chrome sessions are never imported. `browser setup` prepares the dedicated extension and connection; an incompatible existing Bridge is left untouched and reported.
-
-Boss requires an existing CDP BOSS page. Select it with `browser bind boss http://127.0.0.1:PORT`. Only explicit `login boss --new-browser` may open its persistent dedicated profile. After the user confirms login and stability, run `login boss --sync`. Do not clear risk locks or switch profiles to retry a platform block.
-
-LinkedIn/Bilibili preserve existing native sessions. `login CHANNEL --native` explicitly runs their own authentication if necessary. Saved state is not proof of authentication: use `check CHANNEL --search`.
-
-Search-only acceptance is shown as search_ready, not proof that every action works. PLATFORM_BLOCKED means stop and have the user check the official page. BUSY means another Reach command owns the same browser; schedule later.
-
-## Skill not picked up by an AI
-
-`agent-reach skill` shows the one real copy of the instructions (`~/.agents/skills/agent-reach/SKILL.md`) and the links made for other AIs. An AI not covered automatically: `agent-reach skill link <its skills folder>`. On Windows, where links may not be allowed, a copy is made instead and refreshed by `agent-reach update`.
-
-## Install, update and roll back
-
-Agent Reach is installed with uv. A copy installed another way (pip or pipx, as 1.5 was) moves itself to uv on the next `agent-reach update`; your channels, keys and logins under `~/.agent-reach/` are kept.
-
-A new version broke something? Go back to the previous release, then line the tools and skill up with it:
-
-```bash
-uv tool install --force https://github.com/Panniantong/Agent-Reach/archive/refs/tags/v<previous>.zip
-agent-reach update --sync-only
-```
-
-Removed default channels stay removed across updates; `agent-reach add <channel>` brings one back.
-
-## Proxy
-
-Some platforms block certain networks or regions. Save a proxy once (the address is asked for with hidden input, since it may contain a password):
-
-```bash
-agent-reach configure proxy
-```
-
-An agent without a terminal prompt can pipe the value in: `agent-reach configure proxy --stdin`.
-
-It is used for every Agent Reach command. An `HTTPS_PROXY` set in your shell takes precedence.
-
-## Browser port
-
-The Agent Reach browser listens on CDP port 9222 by default. If another tool already uses 9222 (another automation browser, a debugging Chrome), browser channels fail with `Port 9222 belongs to an unmanaged browser`. Move Agent Reach to a free port instead of closing that tool:
-
-```bash
-agent-reach configure browser-port 9333
-```
-
-The setting is kept across updates. If the Agent Reach browser is open, it closes and reopens on the new port the next time it is used.
-
-## Still stuck
-
-- `agent-reach update` and try again.
-- Remove and re-add a channel: `agent-reach remove <channel>` then `agent-reach add <channel>` (remove also clears its login, its site cookies in the Agent Reach browser, and its private tools nobody else uses).
-- Open an issue at https://github.com/Panniantong/Agent-Reach/issues with the output of `agent-reach doctor --text` (it starts with the version) and `agent-reach check <channel> --text`. Remove any personal data first.
+https://github.com/ppiljjonku-hash/Agent-Reach/issues
+오류 보고에 쿠키, 세션 파일, API 키, 검색 내역, 개인정보를 첨부하지 마세요.

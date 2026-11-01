@@ -15,7 +15,7 @@ import shutil
 import pytest
 
 from agent_reach.channels.base import Action, Channel, Param
-from agent_reach.runtime import browser, manage, state, tools, update_notice
+from agent_reach.runtime import browser, manage, state, tools
 from agent_reach.runtime.result import ReachError
 from agent_reach.utils.paths import home_dir
 
@@ -88,6 +88,8 @@ def _fake_version(exe):
 
 @pytest.fixture
 def env(monkeypatch):
+    monkeypatch.setitem(tools.TOOLS, "bili-cli", tools.Tool("bili-cli", "pip", "fixture-cli", ("bili",)))
+    monkeypatch.setitem(tools._BY_COMMAND, "bili", tools.TOOLS["bili-cli"])
     # A private npm fixture exercises dependency installation without shipping MCP.
     monkeypatch.setitem(tools.TOOLS, "mcporter", tools.Tool("mcporter", "npm", "mcporter", ("mcporter",), needs=("node",)))
     monkeypatch.setitem(tools._BY_COMMAND, "mcporter", tools.TOOLS["mcporter"])
@@ -167,16 +169,14 @@ def test_install_records_the_installed_version_and_upgrade_reinstalls(env):
 def test_old_record_without_version_gets_one_without_reinstall(env):
     tools.ensure("bili-cli")
     data = state.load()
-    data["tools"]["bili-cli"] = {"spec": "bilibili-cli==0.6.2", "owner": "agent-reach", "scope": "private"}
+    data["tools"]["bili-cli"] = {"spec": "fixture-cli==0.6.2", "owner": "agent-reach", "scope": "private"}
     state.save(data)
     assert tools.ensure("bili-cli")["version"] == "1.2.3"
     assert env["installs"] == ["bili-cli"]
 
 
 def test_install_spec_uses_tested_versions_or_floor_and_exclude():
-    assert tools.install_spec(tools.TOOLS["bili-cli"]) == "bilibili-cli==0.6.2"
-    spec = tools.install_spec(tools.TOOLS["boss-agent-cli"])
-    assert "git+" not in spec and spec.endswith("/4c991b77086a203173bf08a4cb64a23af6514fe6.zip")
+    assert tools.install_spec(tools.TOOLS["opencli"]) == "@jackwener/opencli@1.8.7"
     assert tools.install_spec(tools.Tool("y", "pip", "pkg", ("y",), floor="1.0", exclude=("1.5",))) == "pkg>=1.0,!=1.5"
     npm = tools.Tool("x", "npm", "pkg", ("x",), floor="1.0.0", exclude=("1.2.0", "1.1.0"))
     assert tools.install_spec(npm) == "pkg@>=1.0.0 <1.1.0 || >1.1.0 <1.2.0 || >1.2.0"
@@ -295,7 +295,7 @@ def test_sync_upgrades_prunes_drops_and_reports(env):
     data = state.load()
     data["tools"]["old-tool"] = {"owner": "agent-reach", "scope": "private", "version": "0.1.0"}
     data["tools"]["user-thing"] = {"owner": "user", "scope": "global", "version": "1.0.0"}
-    data["channels"]["xiaoyuzhou"] = {"added_at": "2026-01-01T00:00:00Z"}
+    data["channels"]["retired"] = {"added_at": "2026-01-01T00:00:00Z"}
     data["checks"]["bili"] = {"at": state.now(), "actions": {"search": False}, "codes": {"search": "NEED_LOGIN"},
                               "previous": {"search": True}}
     state.save(data)
@@ -306,8 +306,8 @@ def test_sync_upgrades_prunes_drops_and_reports(env):
     assert set(state.load()["tools"]) == {"bili-cli"}, "records of unused user copies are dropped, the copies kept"
     assert state.load()["tools"]["bili-cli"]["version"] == "2.0.0"
     assert env["installs"].count("bili-cli") == 2, "shared tools upgrade once per sync"
-    assert out["dropped_channels"] == ["xiaoyuzhou"] and "xiaoyuzhou" not in state.load()["channels"]
-    assert any("xiaoyuzhou" in a for a in out["user_actions"])
+    assert out["dropped_channels"] == ["retired"] and "retired" not in state.load()["channels"]
+    assert any("retired" in a for a in out["user_actions"])
     assert any("log in to bili" in a for a in out["user_actions"]), "a login that worked before and now fails"
 
 
@@ -320,57 +320,12 @@ def test_sync_does_not_ask_to_log_in_again_when_never_logged_in(env):
     assert not any("log in" in a for a in manage.sync()["user_actions"])
 
 
-@pytest.mark.parametrize("latest, available", [("v2.0.1", True), ("v2.0.0", False), ("v1.9.9", False)])
-def test_update_check_compares_versions_and_refreshes_the_cache(monkeypatch, latest, available):
-    monkeypatch.setattr(manage, "__version__", "2.0.0")
-    monkeypatch.setattr(update_notice, "__version__", "2.0.0")
-    monkeypatch.setattr(update_notice, "fetch_latest", lambda timeout=10: {"latest": latest.lstrip("v"), "notes": "n"})
-    assert manage.update_check()["update_available"] is available
-    assert update_notice.read_cache()["latest"] == latest.lstrip("v")
-    assert (update_notice.notice() is not None) is available
-
-
-def test_upgrade_reinstalls_the_release_with_uv():
-    cmd = manage.upgrade_command("2.0.1")
-    assert cmd[:4] == ["uv", "tool", "install", "--force"] and cmd[-1].endswith("/v2.0.1.zip")
-
-
-def test_update_from_a_non_uv_install_moves_itself_to_uv(env, monkeypatch, tmp_path):
-    monkeypatch.setattr(manage, "update_check", lambda: {"current": "2.0.0", "latest": "2.0.1",
-                                                         "update_available": True})
-    monkeypatch.setattr(manage, "install_method", lambda: "other")
-    monkeypatch.setattr(manage.tools, "resolve", lambda c: "/fake/uv" if c == "uv" else None)
-    calls = []
-
-    class Done:
-        def __init__(self, stdout=""):
-            self.returncode, self.stdout, self.stderr = 0, stdout, ""
-
-    exe = tmp_path / ("agent-reach.exe" if os.name == "nt" else "agent-reach")
-
-    def run(cmd, **kw):
-        calls.append(cmd)
-        if cmd[1:4] == ["tool", "dir", "--bin"]:
-            return Done(str(tmp_path))
-        if cmd[0] == str(exe):
-            return Done(json.dumps({"ok": True, "result": {"user_actions": ["log in to x"],
-                                                           "installation_report": {"markdown": "r"}}}))
-        return Done()
-
-    monkeypatch.setattr(manage.subprocess, "run", run)
-    out = manage.update()
-    assert calls[0][:4] == ["/fake/uv", "tool", "install", "--force"] and calls[0][-1].endswith("/v2.0.1.zip")
-    assert calls[2] == [str(exe), "setup"]  # no state yet: the new copy sets itself up
-    assert out["upgraded"] and out["installation_report"] == {"markdown": "r"}
-    assert "log in to x" in out["user_actions"]
-
-
 def test_migration_suggests_channels_from_the_old_config(env):
     (state.root()).mkdir(parents=True, exist_ok=True)
-    (state.root() / "config.yaml").write_text("twitter_auth_token: t\nxueqiu_cookie: c\n")
+    (state.root() / "config.yaml").write_text("twitter_auth_token: t\n")
     result = manage.migrate()
-    assert result["suggested_channels"] == ["twitter", "xueqiu"]
-    assert result["retired_channels"] == ["rss", "exa_search"]
+    assert result["suggested_channels"] == ["twitter"]
+    assert result["retired_channels"] == []
     assert state.load()["migration"] == result
 
 
@@ -423,13 +378,11 @@ def test_old_shared_venv_only_loses_agent_reach(monkeypatch, tmp_path):
     assert ran[0][-4:] == ["uninstall", "-y", "-q", "agent-reach"]
 
 
-def test_update_without_new_release_still_upgrades_tools(env, monkeypatch):
-    monkeypatch.setattr(manage, "update_check", lambda: {"current": "2.0.0", "latest": "2.0.0",
-                                                         "update_available": False})
+def test_sync_upgrades_tools_without_program_self_update(env):
     manage.add("bili")
     env["versions"]["bili-cli"] = "3.0.0"
-    out = manage.update()
-    assert out["upgraded"] is False and isinstance(out["user_actions"], list)
+    out = manage.sync()
+    assert isinstance(out["user_actions"], list)
     assert state.load()["tools"]["bili-cli"]["version"] == "3.0.0"
 
 
@@ -443,36 +396,16 @@ def _cli_json(capsys, argv):
     return json.loads(capsys.readouterr().out.strip().splitlines()[-1])
 
 
-def test_every_json_output_carries_meta_update_only_when_newer(env, capsys, monkeypatch):
-    monkeypatch.setattr(update_notice, "__version__", "1.6.0")
-    assert "meta" not in _cli_json(capsys, ["doctor"]), "no cache, no notice"
-    update_notice.write_cache({"latest": "1.7.0", "notes": "faster"})
-    expected = {"current": "1.6.0", "latest": "1.7.0", "notes": "faster"}
-    assert _cli_json(capsys, ["doctor"])["meta"]["update"] == expected
-    channels = _cli_json(capsys, ["channels"])
-    assert channels["meta"]["update"] == expected
-    action = _cli_json(capsys, ["web", "search", "x"])
-    assert action["meta"]["update"] == expected and "elapsed_ms" in action["meta"]
-    update_notice.write_cache({"latest": "1.6.0", "notes": ""})
-    assert "meta" not in _cli_json(capsys, ["doctor"])
-
-
 def test_queries_never_spawn_background_update_checks(env, monkeypatch, capsys):
     import subprocess
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("background process"))
     assert _cli_json(capsys, ["doctor"])["ok"]
-    assert not hasattr(update_notice, "maybe_refresh")
+    assert not hasattr(manage, "update_check")
 
 
-def test_explicit_update_check_preserves_offline_error_and_writes_success_cache(env, monkeypatch):
-    monkeypatch.setattr(update_notice, "fetch_latest", lambda **k: {"latest": "9.9.9", "notes": "n"})
-    assert manage.update_check()["latest"] == "9.9.9"
-    assert update_notice.read_cache()["latest"] == "9.9.9"
-    def offline(**kwargs):
-        raise OSError("offline")
-    monkeypatch.setattr(update_notice, "fetch_latest", offline)
-    with pytest.raises(ReachError, match="offline"):
-        manage.update_check()
+def test_update_check_is_rejected_without_network(env, capsys):
+    result = _cli_json(capsys, ["update", "--check"])
+    assert result["error"]["code"] == "BAD_INPUT"
 
 
 def _status(name):
@@ -616,14 +549,12 @@ def test_uninstall_removes_only_what_we_own(env):
     Config().set("test", 1)
     (root / "my-notes").mkdir()
     (root / "tools" / "someone-elses-tool").mkdir(parents=True)
-    update_notice.write_cache({"latest": "1.0.0", "notes": ""})
     dry = manage.uninstall(dry_run=True)
     assert (root / "state.json").exists(), "dry run changes nothing"
     assert str(tools.tool_dir("bili-cli")) in dry["removed"]
     assert env["stopped"] == []
     manage.uninstall()
     assert not (root / "state.json").exists() and not (root / "config.yaml").exists()
-    assert not update_notice.cache_path().exists()
     assert not tools.tool_dir("bili-cli").exists()
     assert (root / "my-notes").exists() and (root / "tools" / "someone-elses-tool").exists()
 
@@ -789,16 +720,6 @@ def test_setup_preserves_unowned_or_changed_mcp_configuration(env):
     path.write_text(original)
     manage.setup()
     assert path.read_text()==original
-
-
-@pytest.mark.parametrize("owner", [tools.OURS, "user"])
-def test_setup_prunes_only_our_retired_mcp_transport(env, owner):
-    folder = tools.tool_dir("mcporter")
-    folder.mkdir(parents=True)
-    (folder / "keep-or-remove").write_text("fixture")
-    state.mutate(lambda data: data["tools"].update(mcporter={"owner": owner}))
-    manage.setup()
-    assert folder.exists() == (owner != tools.OURS)
 
 
 def test_retired_mcp_cleanup_preserves_changed_private_path(env, monkeypatch):

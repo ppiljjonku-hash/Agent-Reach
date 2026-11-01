@@ -1,13 +1,16 @@
-# 维护
+# 관리
 
-更新失败、浏览器起不来、渠道报错或用户要卸载时读这份。
+설치·갱신·삭제 요청 시 읽습니다. 포크: https://github.com/ppiljjonku-hash/Agent-Reach
 
-- 更新：`agent-reach update` 升级 Agent Reach、已加渠道的工具和 skill；`agent-reach update --check` 只查有没有新版本。只在用户同意后执行。
-- 状态：`agent-reach doctor --text` 读本地状态，不联网；`agent-reach check <渠道> --text` 联网实测一次（`--search` 只测搜索/职位）。安装成功不等于实测通过。
-- 浏览器：`agent-reach browser status` 看状态，`browser setup` 准备内核和扩展，`browser stop` 关闭；CloakBrowser 下载失败后修好网络可 `browser setup --retry-cloak`。
-- 分清失败环节：依赖下载、浏览器连接、登录、网页加载、平台限流各是各的；网络超时不要说成登录失效。
-- 上游工具出错：记下错误和版本，用户同意后 `agent-reach update` 一次；不改上游工具的安装文件，不循环重试。
-- `PLATFORM_BLOCKED`、`RATE_LIMITED`、`NEED_LOGIN`、`BUSY` 停止本次尝试，等用户处理后再继续，不反复开窗。
-- 密钥和代理：`agent-reach configure groq-key | openai-key | proxy | github-token`，值由用户本人提供。
-- 端口冲突（`Port <n> belongs to an unmanaged browser`）：别的程序占了专用浏览器端口（默认 9222）。不要关掉用户的那个程序；用户同意后 `agent-reach configure browser-port <空闲端口>`。
-- 卸载：先 `agent-reach uninstall --dry-run` 给用户看范围，确认后 `agent-reach uninstall`。只删 Reach 自己装的东西，用户的其他文件和浏览器保留。
+- `doctor`: 로컬 상태와 설치 버전 조회.
+- `setup`: 기본 YouTube 채널과 스킬 준비.
+- `add twitter`, `add reddit`: 선택 채널의 의존성 준비. 다운로드 전에 사용자 승인을 확인.
+- `remove CHANNEL`: 해당 채널과 전용 데이터 제거. 사용자가 만든 파일은 유지.
+- `update`: 추가된 채널의 도구와 스킬만 갱신. 프로그램 자체 원격 조회·다운로드 없음.
+- 프로그램 갱신: 검토한 포크 체크아웃을 수동 재설치.
+- `check CHANNEL --search`: 실제 사이트에서 검색 검사. 로컬 상태 조회와 구분.
+- `skill link PATH`: 다른 에이전트의 스킬 경로 연결.
+- `uninstall --dry-run`: 삭제 목록을 먼저 보여주고 승인 후 `uninstall`.
+
+OpenCLI 신규 설치와 확장은 테스트 버전 `1.8.7` / `v1.8.7`에 고정됩니다.
+키·쿠키·세션 파일·개인 검색 내역을 보고나 이슈에 포함하지 않습니다.

@@ -8,9 +8,6 @@ import urllib.error
 import pytest
 
 from agent_reach.channels.base import Action, Channel, Param
-from agent_reach.channels.github import _parse_target
-from agent_reach.channels.v2ex import _parse_topic_id
-from agent_reach.channels.web import _parse_exa_text
 from agent_reach.channels.youtube import vtt_to_text
 from agent_reach.runtime import cli as unified
 from agent_reach.runtime.dispatch import run_action
@@ -235,19 +232,6 @@ def test_doctor_reports_regressed_per_channel(capsys, fake_cli):
 # ── parsers ──
 
 
-def test_parse_exa_text_splits_results():
-    text = (
-        "Title: A\nURL: https://a.test\nPublished: N/A\nAuthor: Ann\nHighlights:\nbody a\n\n"
-        "Title: B\nURL: https://b.test\nPublished: 2026-01-02\nAuthor: N/A\nbody b"
-    )
-    items = _parse_exa_text(text)
-    assert [(i["title"], i["url"], i["author"], i["published_at"]) for i in items] == [
-        ("A", "https://a.test", "Ann", None),
-        ("B", "https://b.test", None, "2026-01-02"),
-    ]
-    assert items[0]["text"] == "body a"
-
-
 def test_vtt_to_text_drops_timings_tags_and_rolling_repeats():
     vtt = (
         "WEBVTT\nKind: captions\nLanguage: en\n\n"
@@ -256,33 +240,6 @@ def test_vtt_to_text_drops_timings_tags_and_rolling_repeats():
         "2\n00:00:03.000 --> 00:00:04.000\nnext &amp; last\n"
     )
     assert vtt_to_text(vtt) == "hello world\nnext & last"
-
-
-@pytest.mark.parametrize(
-    "target, expected",
-    [
-        ("yt-dlp/yt-dlp", ("yt-dlp", "yt-dlp", None)),
-        ("https://github.com/cli/cli.git", ("cli", "cli", None)),
-        ("https://github.com/cli/cli/issues/42", ("cli", "cli", 42)),
-        ("https://github.com/cli/cli/pull/7?x=1", ("cli", "cli", 7)),
-    ],
-)
-def test_github_target_forms(target, expected):
-    assert _parse_target(target) == expected
-
-
-@pytest.mark.parametrize("bad", ["not a target", "https://gitlab.com/a/b/c/d", "a/b/c"])
-def test_github_rejects_other_targets(bad):
-    with pytest.raises(ReachError) as info:
-        _parse_target(bad)
-    assert info.value.code == "BAD_INPUT"
-
-
-def test_v2ex_topic_id_forms():
-    assert _parse_topic_id("1000") == 1000
-    assert _parse_topic_id("https://www.v2ex.com/t/1000#reply3") == 1000
-    with pytest.raises(ReachError):
-        _parse_topic_id("https://example.com/t/1000")
 
 
 # ── login state under ~/.agent-reach/sessions ──
@@ -593,8 +550,8 @@ def test_login_opens_site_in_dedicated_browser(capsys, monkeypatch, fake_browser
 
 
 @pytest.mark.parametrize("argv", [["ask", "find VLA"], ["mcp"], ["cloak", "setup"], ["browser", "repair-opencli"],
-                                  ["ensure", "xiaohongshu"],
-                                  ["execute", "xiaohongshu", "search", "--params", '{"query":"VLA"}'],
+                                  ["ensure", "twitter"],
+                                  ["execute", "twitter", "search", "--params", '{"query":"VLA"}'],
                                   ["resume", "op_x"]])
 def test_retired_commands_are_rejected_without_starting_any_service(argv, monkeypatch, capsys):
     from agent_reach.runtime import browser, manage
@@ -607,7 +564,7 @@ def test_retired_commands_are_rejected_without_starting_any_service(argv, monkey
 @pytest.mark.parametrize(
     "yaml_text, code",
     [
-        ("ok: false\nerror:\n  code: COMMAND_EXEC\n  message: 'Error: HTTP 401 - make sure you are logged in to Instagram'\n", "NEED_LOGIN"),
+        ("ok: false\nerror:\n  code: COMMAND_EXEC\n  message: 'Error: HTTP 401 - make sure you are logged in to Reddit'\n", "NEED_LOGIN"),
         ("ok: false\nerror:\n  code: AUTH_REQUIRED\n  message: 'Not logged into x.com'\n", "NEED_LOGIN"),
         ("ok: false\nerror:\n  code: COMMAND_EXEC\n  message: 'Pre-navigation to https://x.com failed: Navigation rejected.'\n", "UPSTREAM_BROKEN"),
         ("ok: false\nerror:\n  code: COMMAND_EXEC\n  message: 'TypeError: Failed to fetch'\n", "UPSTREAM_BROKEN"),

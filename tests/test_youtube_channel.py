@@ -8,7 +8,7 @@ readiness (whisper provider + ffmpeg/ffprobe) is surfaced for ``doctor`` without
 gating the backend. These tests stub ``probe_command`` / ``shutil.which``
 so every branch runs offline. Follow-up to #331 — extends dedicated
 channel coverage after rss (#360), github (#361), web (#363),
-reddit (#364), xueqiu (#365) and v2ex (#366).
+the remaining Reddit adapter.
 """
 
 from pathlib import Path
@@ -89,7 +89,6 @@ def test_project_installs_official_ytdlp_default_dependencies():
 
 
 # --- check(): transcription readiness surfaced (deno present so JS path is ok) ---
-
 
 
 
