@@ -16,7 +16,7 @@ import subprocess
 import urllib.error
 from typing import Any, Optional
 
-from agent_reach.utils.text import scrub_url_credentials
+from agent_reach.utils.text import scrub_sensitive_data, scrub_url_credentials
 
 SCHEMA_VERSION = 1
 
@@ -53,8 +53,8 @@ class ReachError(Exception):
     def __init__(self, code: str, message: str, hint: Optional[str] = None):
         super().__init__(message)
         self.code = code
-        self.message = message
-        self.hint = hint
+        self.message = scrub_url_credentials(message)
+        self.hint = scrub_url_credentials(hint) if hint is not None else None
 
 
 def _clean(text: object) -> str:
@@ -92,14 +92,14 @@ def make_item(
     raw: Any = None,
 ) -> dict:
     """One normalized item. Missing fields are null; `raw` keeps upstream data."""
-    return {
+    return scrub_sensitive_data({
         "title": title or None,
         "url": url or None,
         "author": author or None,
         "published_at": published_at or None,
         "text": text or None,
         "raw": raw,
-    }
+    })
 
 
 def unix_to_iso(value: Any) -> Optional[str]:
@@ -131,7 +131,7 @@ def envelope(
         "action": action,
         "backend": backend if error is None else None,
         "items": list(items or []) if error is None else [],
-        "meta": {"elapsed_ms": elapsed_ms, "attempts": list(attempts or [])},
+        "meta": {"elapsed_ms": elapsed_ms, "attempts": scrub_sensitive_data(list(attempts or []))},
         "error": None
         if error is None
         else {

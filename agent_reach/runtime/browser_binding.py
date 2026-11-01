@@ -40,8 +40,9 @@ def environment(channel: str):
     if not bridge.require_compatible():
         raise ReachError(NEED_SETUP, "The dedicated browser Bridge disconnected; reopen the Reach browser")
     browser.touch()
+    # CI=1: OpenCLI 1.8.7 reads it at runtime only to skip its npm/GitHub update check.
     return {"OPENCLI_PROFILE": profile, "OPENCLI_WINDOW": "background",
-            "OPENCLI_CDP_ENDPOINT": "", "OPENCLI_CDP_TARGET": ""}
+            "OPENCLI_CDP_ENDPOINT": "", "OPENCLI_CDP_TARGET": "", "CI": "1"}
 
 
 # One OS file lock per name: nonblocking `execution_lock`, or `wait_lock` that

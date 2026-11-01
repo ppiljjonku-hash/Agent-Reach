@@ -94,8 +94,8 @@ jobs:
               "agent_reach/skill/references/capabilities.md",
           ):
               assert path in names, f"{path} missing from wheel"
-          assert "agent_reach/channels/xiaoyuzhou.py" in names
-          assert "agent_reach/scripts/transcribe_xiaoyuzhou.sh" in names
+          channels = {name.rsplit("/", 1)[-1] for name in names if name.startswith("agent_reach/channels/") and name.endswith(".py")}
+          assert channels == {"__init__.py", "base.py", "twitter.py", "reddit.py", "youtube.py"}, channels
           for retired in ("agent_reach/mcp_server.py", "agent_reach/runtime/ask.py",
                           "agent_reach/backends/cloak_worker.py", "agent_reach/runtime/opencli_compat.py"):
               assert retired not in names, f"retired module remains in wheel: {retired}"
@@ -124,7 +124,6 @@ jobs:
       run:
         shell: bash
     env:
-      AGENT_REACH_NO_UPDATE_CHECK: "1"
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
@@ -139,7 +138,7 @@ jobs:
 
       - name: Install 1.5 the way its install guide said (pipx)
         run: |
-          git fetch --tags --force https://github.com/Panniantong/Agent-Reach.git 'refs/tags/v1.5.0:refs/tags/v1.5.0' || true
+          git fetch --tags https://github.com/ppiljjonku-hash/Agent-Reach.git 'refs/tags/v1.5.0:refs/tags/v1.5.0'
           git worktree add ../v15 v1.5.0
           python -m pip install --quiet pipx
           python -m pipx install --python "$(python -c 'import sys;print(sys.executable)')" ../v15

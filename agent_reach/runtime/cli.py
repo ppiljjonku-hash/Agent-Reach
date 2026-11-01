@@ -9,7 +9,6 @@ go to stderr. Exit code 0 = ok, 1 = error. Exceptions for humans: `help`, and
 `--text` on setup / doctor / check. `login` shows the upstream's interactive
 output (QR codes, prompts) on stderr so stdout still carries only the JSON.
 
-When a newer release is known (cached by an explicit update --check), every JSON object carries meta.update = {current, latest, notes}.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ from typing import Dict, List, Optional, Sequence, cast
 
 from agent_reach.channels import get_all_channels
 from agent_reach.channels.base import Action, Channel
+from agent_reach.utils.text import scrub_sensitive_data
 
 from . import browser
 from .dispatch import DEFAULT_TIMEOUT, find_action, run_action
@@ -45,10 +45,9 @@ HELP = """agent-reach — internet access for AI agents (all output is JSON)
 
 For agents:
   agent-reach channels                    list channels, actions, params
-  agent-reach <channel> <action> [args]   e.g. agent-reach bilibili search python
+  agent-reach <channel> <action> [args]   e.g. agent-reach youtube search python
   agent-reach read <url>                  read a link with the matching channel
-  Search/read try declared public web routes first; --backend selects a site tool
-  --backend public-web                  public access only; no browser fallback
+  Search/read use only the selected site's local tools
 
 For the user:
   agent-reach setup [--text]              install defaults and skill; --text displays the capability tables
@@ -60,8 +59,8 @@ For the user:
   agent-reach skill [link <skills-dir>]   where the agent skill is; link it for another AI
   agent-reach doctor [--text]             status of every channel and installed tool versions (no network)
   agent-reach check [channel] [--text]    live-test channels; --search tests search/jobs only
-  agent-reach update [--check]            upgrade Agent Reach, every added channel's tools and the skill
-  agent-reach configure <key> [value]     groq-key | openai-key | proxy | github-token | browser-port
+  agent-reach update                      refresh installed tools and the skill; no program self-update
+  agent-reach configure <key> [value]     groq-key | openai-key | proxy | browser-port
   agent-reach uninstall [--dry-run]       remove everything Agent Reach installed
 """
 
@@ -97,19 +96,8 @@ class _Parser(argparse.ArgumentParser):
         raise _ArgError(message)
 
 
-#: Attach meta.update to JSON output (off for `update`, which reports versions itself).
-_SHOW_NOTICE = True
-
-
 def _emit(payload: dict) -> int:
-    if _SHOW_NOTICE:
-        from .update_notice import notice
-
-        info = notice()
-        if info:
-            meta = payload.get("meta")
-            payload["meta"] = {**(meta if isinstance(meta, dict) else {}), "update": info}
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    sys.stdout.write(json.dumps(scrub_sensitive_data(payload), ensure_ascii=False) + "\n")
     sys.stdout.flush()
     return 0 if payload.get("ok") else 1
 
@@ -133,8 +121,7 @@ def _parse_action_args(action: Action, args: Sequence[str]) -> Dict[str, object]
             parser.add_argument(p.name, nargs="+" if p.type is str else None)
         else:
             parser.add_argument(f"--{p.name}", dest=p.name, default=None)
-    parser.add_argument("--backend", choices=[b[0] for b in action.backends] +
-                        (["public-web"] if action.public_web else []), default=None)
+    parser.add_argument("--backend", choices=[b[0] for b in action.backends], default=None)
     parser.add_argument("--timeout", type=float, default=action.timeout or DEFAULT_TIMEOUT)
     ns = vars(parser.parse_args(list(args)))
     for p in action.params:
@@ -170,11 +157,7 @@ def _cmd_read(args: Sequence[str]) -> int:
     except _ArgError as exc:
         return _bad_input(None, "read", f"{exc}; usage: agent-reach read <url>")
     readers = [ch for ch in unified_channels() if find_action(ch, "read")]
-    specific = [ch for ch in readers if ch.name != "web"]
-    target = next((ch for ch in specific if ch.can_handle(ns.url)), None)
-    if target is not None and target.name == "reddit" and ns.backend in ("jina", "exa"):
-        target = next((ch for ch in readers if ch.name == "web"), None) or target
-    target = target or next((ch for ch in readers if ch.name == "web"), None)
+    target = next((ch for ch in readers if ch.can_handle(ns.url)), None)
     if target is None:
         return _bad_input(None, "read", "no channel can read this URL")
     return _emit(run_action(target, "read", {"target": ns.url}, timeout=ns.timeout, only_backend=ns.backend))
@@ -205,7 +188,6 @@ def _cmd_channels(_args: Sequence[str]) -> int:
                             for p in a.params
                         ],
                         "backends": [label for label, _ in a.backends],
-                        "public_web": list(a.public_web),
                     }
                     for a in ch.actions
                 ],
@@ -299,9 +281,6 @@ def _cmd_management(head: str, args: Sequence[str]) -> int:
         parser.add_argument("channel")
         if head == "add":
             parser.add_argument("--allow-upgrade", action="store_true")
-    elif head == "update":
-        parser.add_argument("--check", action="store_true")
-        parser.add_argument("--sync-only", action="store_true")
     elif head == "uninstall":
         parser.add_argument("--dry-run", action="store_true")
     elif head == "configure":
@@ -332,9 +311,7 @@ def _cmd_management(head: str, args: Sequence[str]) -> int:
     if head == "remove":
         return _mgmt(head, manage.remove, ns.channel)
     if head == "update":
-        if ns.sync_only:
-            return _mgmt(head, manage.sync)
-        return _mgmt(head, manage.update, check_only=ns.check)
+        return _mgmt(head, manage.sync)
     if head == "uninstall":
         return _mgmt(head, manage.uninstall, dry_run=ns.dry_run)
     if head == "configure":
@@ -529,15 +506,12 @@ def _cmd_browser(args: Sequence[str]) -> int:
 
 
 def main(argv: Sequence[str]) -> int:
-    global _SHOW_NOTICE
-
     if not argv or argv[0] in ("help", "-h", "--help"):
         sys.stdout.write(HELP)
         return 0
     from . import tools
 
     tools.extend_path()
-    _SHOW_NOTICE = argv[0] != "update"
     _apply_saved_proxy()
     head, rest = argv[0], argv[1:]
     if head == "channels":

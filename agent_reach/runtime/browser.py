@@ -34,6 +34,8 @@ from agent_reach.utils.paths import (
     read_small_text_no_follow,
 )
 
+from .tools import TOOLS
+
 DEFAULT_CDP_PORT = 9222
 
 
@@ -68,7 +70,8 @@ _LOCK_WAIT = START_WAIT + 30.0
 #: How long Windows setup waits for the user to add the extension from the Web Store.
 _STORE_WAIT = 180.0
 
-OPENCLI_RELEASE_API = "https://api.github.com/repos/jackwener/OpenCLI/releases/latest"
+OPENCLI_RELEASE_TAG = "v" + TOOLS["opencli"].tested
+OPENCLI_RELEASE_API = "https://api.github.com/repos/jackwener/OpenCLI/releases/tags/" + OPENCLI_RELEASE_TAG
 _EXTENSION_ASSET_RE = re.compile(r"^opencli-extension-.*\.zip$")
 _USER_AGENT = "agent-reach"
 
@@ -382,25 +385,26 @@ def extension_version() -> Optional[str]:
 
 
 def refresh_extension(*, upgrade: bool = False) -> dict:
-    """Install or update the OpenCLI extension from the latest OpenCLI release.
+    """Install the extension from the tested OpenCLI release tag.
 
-    Keeps the current copy when GitHub is unreachable; raises only if there is none.
+    Only a copy recorded for the tested tag may be reused offline.
     Returns {"version", "updated"}. A running browser is closed before files change.
     """
     from .result import UPSTREAM_BROKEN, ReachError
 
     current = extension_version()
-    if current and not upgrade:
+    pinned = current and _load_state().get("extension_release") == OPENCLI_RELEASE_TAG
+    if pinned and not upgrade:
         return {"version": current, "updated": False}
     try:
         release = json.loads(_fetch(OPENCLI_RELEASE_API))
         asset = next(a for a in release.get("assets", []) if _EXTENSION_ASSET_RE.match(a.get("name", "")))
     except Exception as exc:  # noqa: BLE001
-        if current:
+        if pinned:
             return {"version": current, "updated": False}
         raise ReachError(UPSTREAM_BROKEN, f"could not find the OpenCLI extension release: {exc}") from None
     state = _load_state()
-    if current and state.get("extension_asset") == asset["name"]:
+    if pinned and state.get("extension_asset") == asset["name"]:
         return {"version": current, "updated": False}
     from . import state as ledger
     make_private_dir(browser_root())
@@ -416,9 +420,6 @@ def refresh_extension(*, upgrade: bool = False) -> dict:
         if manifest is None:
             raise ValueError("no manifest.json in the extension zip")
         version = json.loads(manifest.read_text("utf-8")).get("version")
-        if current and version == current:
-            update_state(extension_asset=asset["name"], extension_version=version)
-            return {"version": version, "updated": False}
         if is_running():
             stop()  # never swap files under a running extension; the next launch loads the new one
         shutil.rmtree(extension_dir(), ignore_errors=True)
@@ -426,12 +427,12 @@ def refresh_extension(*, upgrade: bool = False) -> dict:
     except ReachError:
         raise
     except Exception as exc:  # noqa: BLE001
-        if current and extension_version():
+        if pinned and extension_version():
             return {"version": current, "updated": False}
         raise ReachError(UPSTREAM_BROKEN, f"could not install the OpenCLI extension: {exc}") from None
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    update_state(extension_asset=asset["name"], extension_version=version)
+    update_state(extension_asset=asset["name"], extension_version=version, extension_release=OPENCLI_RELEASE_TAG)
     return {"version": version, "updated": True}
 
 
@@ -482,9 +483,7 @@ def _launch(url: str, *, headless: bool = True) -> None:
             raise ReachError(UPSTREAM_BROKEN, f"the Agent Reach browser did not open within {START_WAIT:.0f}s")
         _spawn_watcher()
         return
-    if not extension_version():
-        with contextlib.suppress(ReachError):
-            refresh_extension()  # offline: open without it; the OpenCLI wait reports the problem
+    refresh_extension()
     # A watcher still exiting from the last browser holds its lock for a moment; the new one waits for it.
     with open(watcher_log_path(), "wb") as log:
         proc = subprocess.Popen(

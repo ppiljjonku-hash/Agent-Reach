@@ -1,5 +1,13 @@
 # Changelog / 更新日志
 
+## 개인 포크: 3채널 보안 정리
+
+- 지원 채널은 X (`twitter`), Reddit (`reddit`), YouTube (`youtube`)만 유지합니다.
+- 제3자 검색·페이지 중계와 프로그램 자체 원격 갱신을 제거합니다.
+- OpenCLI 확장을 테스트 도구 버전 `v1.8.7` 릴리스로 고정합니다.
+- 세션은 로컬에서만 복사합니다. 음성 전사는 사용자가 설정한 API 키가 있을 때만 외부 업로드합니다.
+- 아래는 축소 이전의 역사적 변경 기록이며 현재 지원 목록이 아닙니다.
+
 All notable changes to this project will be documented in this file.
 
 本项目的所有重要变更都会记录在此文件中。

@@ -38,33 +38,56 @@ def test_domain_match_is_exact_or_subdomain():
     assert not cdp.domain_matches("notreddit.com", "reddit.com")
 
 
-def test_extension_installs_at_a_stable_path_and_refreshes_only_on_new_release(home, monkeypatch, tmp_path):
+@pytest.mark.parametrize('endpoint', [
+    'ws://external.example:9222/devtools/browser/id',
+    'ws://127.0.0.1:9999/devtools/browser/id',
+    'ws://user:pass@127.0.0.1:9222/devtools/browser/id',
+    'wss://127.0.0.1:9222/devtools/browser/id',
+])
+def test_cdp_rejects_external_or_wrong_port_before_transmitting_cookies(monkeypatch, endpoint):
+    from agent_reach.runtime.result import ReachError
+    monkeypatch.setattr(cdp, '_json', lambda path: {'webSocketDebuggerUrl': endpoint})
+    monkeypatch.setattr(cdp.socket, 'create_connection', lambda *args, **kwargs: pytest.fail('opened socket'))
+    with pytest.raises(ReachError, match='loopback endpoint'):
+        cdp.call('Storage.setCookies', {'cookies': [{'value': 'private-cookie'}]})
+
+
+def test_extension_installs_at_a_stable_path_from_the_tested_release(home, monkeypatch, tmp_path):
     manifest = lambda v: (json.dumps({"manifest_version": 3, "version": v}), 0o644)  # noqa: E731
     v1 = _zip(tmp_path / "v1.zip", {"manifest.json": manifest("1.0.1"), "dist/background.js": ("//", 0o644)})
-    v2 = _zip(tmp_path / "v2.zip", {"manifest.json": manifest("1.0.2")})
     release = {"assets": [{"name": "opencli-extension-v1.0.1.zip", "browser_download_url": "u1"}]}
-    _fake_downloads(monkeypatch, {browser.OPENCLI_RELEASE_API: release}, {"u1": v1, "u2": v2})
+    _fake_downloads(monkeypatch, {browser.OPENCLI_RELEASE_API: release}, {"u1": v1})
+    from agent_reach.runtime.tools import TOOLS
+    assert browser.OPENCLI_RELEASE_TAG == "v" + TOOLS["opencli"].tested == "v1.8.7"
+    assert browser.OPENCLI_RELEASE_API.endswith("/releases/tags/v1.8.7")
 
     assert browser.refresh_extension() == {"version": "1.0.1", "updated": True}
     assert (browser.extension_dir() / "dist" / "background.js").is_file()
     assert browser.refresh_extension() == {"version": "1.0.1", "updated": False}
 
-    release["assets"] = [{"name": "opencli-extension-v1.0.2.zip", "browser_download_url": "u2"}]
-    assert browser.refresh_extension() == {"version": "1.0.1", "updated": False}
-    assert browser.refresh_extension(upgrade=True) == {"version": "1.0.2", "updated": True}
-    assert browser.extension_version() == "1.0.2"
-    assert browser._load_state()["extension_version"] == "1.0.2"
+    assert browser.refresh_extension(upgrade=True) == {"version": "1.0.1", "updated": False}
+    assert browser._load_state()["extension_release"] == "v1.8.7"
 
 
 def test_extension_refresh_offline_keeps_the_current_copy(home, monkeypatch):
     browser.extension_dir().mkdir(parents=True)
     (browser.extension_dir() / "manifest.json").write_text(json.dumps({"version": "1.0.0"}))
+    browser.update_state(extension_release=browser.OPENCLI_RELEASE_TAG)
 
     def offline(url, timeout=30.0):
         raise OSError("offline")
 
     monkeypatch.setattr(browser, "_fetch", offline)
     assert browser.refresh_extension() == {"version": "1.0.0", "updated": False}
+
+
+def test_unpinned_extension_cannot_be_reused_offline(home, monkeypatch):
+    browser.extension_dir().mkdir(parents=True)
+    (browser.extension_dir() / "manifest.json").write_text(json.dumps({"version": "9.9.9"}))
+    monkeypatch.setattr(browser, "_fetch", lambda *args: (_ for _ in ()).throw(OSError("offline")))
+    from agent_reach.runtime.result import ReachError
+    with pytest.raises(ReachError, match="extension release"):
+        browser.refresh_extension()
 
 
 def test_ensure_browser_prefers_cloak_and_reuses_its_install(home, monkeypatch, tmp_path):

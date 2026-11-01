@@ -119,7 +119,7 @@ class YouTubeChannel(Channel):
             "Full subtitle text of a video (manual or auto captions)",
             (
                 Param("target", "video link or id"),
-                Param("lang", "preferred languages, comma separated", required=False, default="zh-Hans,zh,en,en-orig"),
+                Param("lang", "preferred languages, comma separated", required=False, default="ko,en,en-orig"),
             ),
             (("yt-dlp", "_ytdlp_subtitle"),),
             live_test={"target": "https://www.youtube.com/watch?v=jNQXAC9IVRw"},

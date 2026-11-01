@@ -82,10 +82,6 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
     monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
     monkeypatch.delenv("OPENCLAW_HOME", raising=False)
-    # never start the background release check from tests
-    monkeypatch.setenv("AGENT_REACH_NO_UPDATE_CHECK", "1")
-    # Public-first routing must not turn adapter unit tests into live requests.
-    # Network tests supply their own response below this fixture.
     def no_network(*args, **kwargs):
         raise OSError("Unit tests require an explicit mocked HTTP response")
     monkeypatch.setattr(urllib.request, "urlopen", no_network)
@@ -111,14 +107,3 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setattr(Config, "CONFIG_DIR", config_dir)
     monkeypatch.setattr(Config, "CONFIG_FILE", config_dir / "config.yaml")
     return home
-
-
-@pytest.fixture(autouse=True)
-def isolated_xueqiu_cookie_jar(monkeypatch):
-    """Prevent the module-level Xueqiu session from leaking between tests."""
-    from agent_reach.channels import xueqiu
-
-    xueqiu._cookie_jar.clear()
-    monkeypatch.setattr(xueqiu, "_cookies_initialized", False)
-    yield
-    xueqiu._cookie_jar.clear()
